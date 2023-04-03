@@ -20,7 +20,7 @@ def unzip_data(portal, item_id):
     arcpy.AddMessage('Getting FEMA effective data...')
     try:     
         #downloads_path = str(Path.home() / "Downloads")    # path to downloads folder
-        data_dir = os.path.join(os.path.dirname(in_gdb), 'data_download')
+        data_dir = os.path.join(os.path.dirname(in_gdb), 'BLE_QAQC_Data')
         if os.path.isdir(data_dir):
             downloaded_gdb = os.path.join(data_dir, 'BLE-QAQC-Tools-Data.gdb')
         else:
@@ -71,15 +71,15 @@ def nfhl_compare(test_feature, feature_type, report_file):
     nfhl_count = arcpy.management.GetCount(nfhl_clip).outputCount
     df = pd.read_csv(report_file, '\t')
     if dtl_count == nfhl_count:
-        nfhl_compare = f'There are no missing detailed studies {feature_type} in the database'
+        nfhl_compare = f'There are no missing {os.path.basename(test_feature)} {feature_type} in the database'
         df.loc[df["Item Name"] == os.path.basename(test_feature), 'NFHL Spatial Check'] = 'Pass'
         print(nfhl_compare)
     elif dtl_count > nfhl_count:
-        nfhl_compare = f'There are {dtl_count - nfhl_count} extra detailed studies {feature_type} in the database'
+        nfhl_compare = f'There are {dtl_count - nfhl_count} extra {os.path.basename(test_feature)} {feature_type} in the database'
         df.loc[df["Item Name"] == os.path.basename(test_feature), 'NFHL Spatial Check'] = 'Fail'
         print(nfhl_compare)
     elif dtl_count < nfhl_count:
-        nfhl_compare = f'There are {nfhl_count - dtl_count} missing detailed studies {feature_type} in the database'
+        nfhl_compare = f'There are {nfhl_count - dtl_count} missing {os.path.basename(test_feature)} {feature_type} in the database'
         df.loc[df["Item Name"] == os.path.basename(test_feature), 'NFHL Spatial Check'] = 'Fail'
         print(nfhl_compare)
     df.to_csv(report_file, sep='\t', index=False)
@@ -102,6 +102,9 @@ if __name__ == '__main__':
         nfhl_compare(test_feature='DTL_STUD_AR', feature_type='polygons', report_file=report_file)
     if 'DTL_STUD_LN' in [i[1] for i in features]:
         nfhl_compare(test_feature='DTL_STUD_LN', feature_type='lines', report_file=report_file)
+    with open(report_file, "a") as report:
+        report.write('\nManual review of DTL_STUD_AR polygons compared to BLE extents required')
+    arcpy.SetParameterAsText(2, report_file)
     arcpy.AddMessage('Comaprison to FEMA effective is complete.....')
     with arcpy.EnvManager(workspace = arcpy.env.scratchWorkspace):
         to_delete = arcpy.ListFeatureClasses("*X")
@@ -109,5 +112,3 @@ if __name__ == '__main__':
             arcpy.management.Delete(os.path.join(arcpy.env.scratchWorkspace, fc))
     if 'DTL_STUD_AR' and 'DTL_STUD_LN' not in [i[1] for i in features]: 
         arcpy.AddMessage('There are no detailed studies features in the database.....')
-    
-    
