@@ -9,9 +9,10 @@
 #                   
 # Author: Gennadii Prykhodko, Halff Accociates, Inc., 2022
 ########################################################################################
-import arcpy, os
+import arcpy, os, zipfile
 import pandas as pd
 import numpy as np
+from arcgis.gis import GIS
 arcpy.env.overwriteOutput = True
 arcpy.env.addOutputsToMap = False
 outsym = """{
@@ -964,13 +965,38 @@ outsym = """{
   "rGBColorProfile" : "sRGB IEC61966-2-1 noBPC",
   "cMYKColorProfile" : "U.S. Web Coated (SWOP) v2"
 }"""
-def create_gdb(report_file):
-    out_folder = os.path.dirname(report_file)
-    gdb_name = os.path.basename(report_file)[:-4]
-    gdb_path = arcpy.management.CreateFileGDB(out_folder, gdb_name)
+def create_gdb(data_dir, report_file):
+    if os.path.isdir(data_dir):
+        
+        #out_folder = os.path.dirname(report_file)
+        gdb_name = os.path.basename(report_file)[:-4]
+        gdb_path = arcpy.management.CreateFileGDB(data_dir, gdb_name)
+    else:
+        os.makedirs(data_dir)
+        gdb_name = os.path.basename(report_file)[:-4]
+        gdb_path = arcpy.management.CreateFileGDB(data_dir, gdb_name)
     return gdb_path.getOutput(0)
-def bfe_2d_check(test_feature, wse_01pct, report_file):
-        save_path = create_gdb(report_file)
+def unzip_data(portal, item_id):
+    try:     
+        #downloads_path = str(Path.home() / "Downloads")    # path to downloads folder
+        data_dir = os.path.join(os.path.dirname(in_gdb), 'BLE_QAQC_Data')
+        file_name = os.path.join(data_dir, 'BFE_2D_TestPoints.lyrx')
+        if os.path.isfile(file_name) :
+            downloaded_item = file_name
+        else:
+            gis = GIS(portal)
+            tool_data = gis.content.get(item_id)
+            zipped_tool_data = tool_data.download(data_dir)    # download the data item
+            z = zipfile.ZipFile(zipped_tool_data)
+            z.extractall(data_dir)
+            downloaded_item = os.path.join(data_dir, 'BFE_2D_TestPoints.lyrx')     
+    except Exception as e:
+        print(f'Error unzipping file: {e}')
+    return downloaded_item
+
+def bfe_2d_check(test_feature, wse_01pct, report_file, in_gdb):
+        data_dir = os.path.join(os.path.dirname(in_gdb), 'BLE_QAQC_Data')
+        save_path = create_gdb(data_dir, report_file)
         test_index = [i[1] for i in features].index(test_feature)
         test_feature = os.path.join(in_gdb, features[test_index][0], features[test_index][1])
         wse_grid = os.path.join(in_gdb, wse_01pct)
@@ -985,15 +1011,15 @@ def bfe_2d_check(test_feature, wse_01pct, report_file):
         sr = arcpy.Describe(test_feature).spatialReference
         sr_project = arcpy.Raster(wse_grid).spatialReference
         transform = arcpy.ListTransformations(sr, sr_project)
-        bfe_points = arcpy.management.XYTableToPoint(test_feature, os.path.join(save_path, "BFE_2D_TestPointsX"), "X", "Y", None, sr)
+        bfe_points = arcpy.management.XYTableToPoint(test_feature, os.path.join(scratch_gdb, "BFE_2D_TestPointsX"), "X", "Y", None, sr)
         bfe_points_first = arcpy.management.XYTableToPoint(test_feature, os.path.join(scratch_gdb,"BFE_2D_PointFirstX"), "X_FIRST", "Y_FIRST", None, sr)
         bfe_points_last = arcpy.management.XYTableToPoint(test_feature, os.path.join(scratch_gdb,"BFE_2D_PointLastX"), "X_LAST", "Y_LAST", None, sr)
         arcpy.management.Append([bfe_points_first, bfe_points_last], bfe_points)
-        arcpy.management.DeleteField(test_feature, "X;Y;LEN_FT;X_FIRST;Y_FIRST;X_LAST;Y_LAT", "DELETE_FIELDS")
+        arcpy.management.DeleteField(test_feature, "X;Y;LEN_FT;X_FIRST;Y_FIRST;X_LAST;Y_LAST", "DELETE_FIELDS")
         try:
-            bfe_points = arcpy.management.Project(bfe_points, os.path.join(scratch_gdb,"BFE_2D_TestPoints"), sr_project, transform[0], sr, "NO_PRESERVE_SHAPE", None, "NO_VERTICAL")
+            bfe_points = arcpy.management.Project(bfe_points, os.path.join(save_path,"BFE_2D_TestPoints"), sr_project, transform[0], sr, "NO_PRESERVE_SHAPE", None, "NO_VERTICAL")
         except:
-            bfe_points = arcpy.management.Project(bfe_points, os.path.join(scratch_gdb,"BFE_2D_TestPoints"), sr_project, None, sr, "NO_PRESERVE_SHAPE", None, "NO_VERTICAL")
+            bfe_points = arcpy.management.Project(bfe_points, os.path.join(save_path,"BFE_2D_TestPoints"), sr_project, None, sr, "NO_PRESERVE_SHAPE", None, "NO_VERTICAL")
         arcpy.sa.ExtractMultiValuesToPoints(bfe_points, f"{wse_grid} BFE_BASE", "NONE")
         arr = arcpy.da.FeatureClassToNumPyArray(bfe_points, ['BLELEV1PCT', 'BFE_BASE'])
         bfe_compare = np.round(arr['BFE_BASE']) - arr['BLELEV1PCT']
@@ -1015,6 +1041,8 @@ if __name__ == '__main__':
     
     in_gdb = arcpy.GetParameterAsText(0)
     report_file = arcpy.GetParameterAsText(1)
+    fema_portal = r"https://fema.maps.arcgis.com/"
+    item_id = '5c61c8ad50554b3ba475be3f83268945' 
     arcpy.env.workspace = in_gdb
     scratch_gdb = arcpy.env.scratchWorkspace
     feature_datasets = arcpy.ListDatasets({}, "Feature")
@@ -1026,16 +1054,18 @@ if __name__ == '__main__':
         arcpy.AddMessage('Checking if BFE_2D is in the database.....')
         with open(report_file, "a") as report:
             report.write('\n-----------------------------------------------\nTool 3 - Results:\n-----------------------------------------------')
-        test_points = bfe_2d_check('BFE_2D', 'BLE_WSE_01PCT', report_file)
+        test_points = bfe_2d_check('BFE_2D', 'BLE_WSE_01PCT', report_file, in_gdb)
         arcpy.SetParameter(2, test_points)
         #outsym = f"JSONRENDERER={outsym}"
-        outsym = f'JSONCIMDEF={outsym}'
+        #outsym = f'JSONCIMDEF={outsym}'
+        outsym = unzip_data(fema_portal, item_id)
         arcpy.SetParameterSymbology(2, outsym)
+        arcpy.SetParameterAsText(3, report_file)
         arcpy.AddMessage('BFE_2D mapping value check is complete.....')
     with arcpy.EnvManager(workspace = arcpy.env.scratchWorkspace):
-            to_delete = arcpy.ListFeatureClasses("*X")
-            for fc in to_delete:
-                    arcpy.management.Delete(os.path.join(arcpy.env.scratchWorkspace, fc))
+        to_delete = arcpy.ListFeatureClasses("*X")
+        for fc in to_delete:
+            arcpy.management.Delete(os.path.join(arcpy.env.scratchWorkspace, fc))
     if 'BFE_2D' not in [i[1] for i in features]: 
         arcpy.AddMessage('BFE_2D is missing from the database')
     if 'BLE_WSE_01PCT' not in rasters:
