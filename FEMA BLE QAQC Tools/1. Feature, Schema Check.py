@@ -25,7 +25,7 @@ def get_feature_service(url_fl, fc_name, scratch_gdb):
 def unzip_data(portal, item_id):
     try:     
         #downloads_path = str(Path.home() / "Downloads")    # path to downloads folder
-        data_dir = os.path.join(os.path.dirname(in_gdb), 'data_download')
+        data_dir = os.path.join(os.path.dirname(in_gdb), 'BLE_QAQC_Data')
         if os.path.isdir(data_dir):
             downloaded_gdb = os.path.join(data_dir, 'BLE-QAQC-Tools-Data.gdb')
         else:
@@ -287,6 +287,6 @@ if __name__ == '__main__':
     arcpy.env.workspace = in_gdb
     scratch_gdb = arcpy.env.scratchWorkspace
     frd_check(report_file)
-    #arcpy.SetParameterAsText(2, report_file)
+    arcpy.SetParameterAsText(2, report_file)
     arcpy.AddMessage("Feature, schema check is complete....")
     
